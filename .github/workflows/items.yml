@@ -1,4 +1,4 @@
-name: users — build and push
+name: items — build and push
 
 # Fires only when this service changes. Path filtering keeps each service's
 # pipeline independent.
@@ -6,8 +6,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "app/users/**"
-      - ".github/workflows/users.yml"
+      - "app/items/**"
+      - ".github/workflows/items.yml"
 
 # Least privilege. id-token lets us mint the OIDC token for AWS; contents:read
 # is just to check out this repo. Note what is NOT here: no write permission
@@ -18,8 +18,8 @@ permissions:
 
 env:
   AWS_REGION: us-west-2
-  ECR_REPOSITORY: eks-gitops-users
-  SERVICE: users
+  ECR_REPOSITORY: eks-gitops-items
+  SERVICE: items
 
 jobs:
   build:
