@@ -1,0 +1,68 @@
+name: users — build and push
+
+# Fires only when the users service changes. Path filtering means an edit to
+# items/ never rebuilds users.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/users/**"
+      - ".github/workflows/users.yml"
+
+# Least privilege. id-token lets us mint the OIDC token for AWS; contents:read
+# is just to check out this repo. Note what is NOT here: no write permission
+# anywhere, and no repository secrets are referenced by this workflow at all.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: eks-gitops-users
+  SERVICE: users
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Lightweight gate: compile the source to catch syntax errors WITHOUT
+      # importing it — main.py reads DATABASE_URL at import time, so a real
+      # import would need a database. Real pytest coverage is the next step up.
+      - name: Syntax check
+        working-directory: app/${{ env.SERVICE }}
+        run: python3 -m py_compile app/main.py
+
+      # Keyless: the role's trust policy only accepts OIDC tokens from
+      # repo:fuhchu/eks-gitops-app, and the role can ONLY push to ECR — it has
+      # no EKS access whatsoever.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::445481011516:role/eks-gitops-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tag with the git SHA: immutable and traceable back to the exact commit.
+      # Pushing this image is the ENTIRE job. Argo CD Image Updater (running in
+      # the cluster) notices the new tag, commits it to eks-gitops-config, and
+      # Argo CD syncs it. CI has no cluster credentials and no git credentials.
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" "app/$SERVICE/"
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Summary
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Pushed $ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "Argo CD Image Updater will promote it to the config repo." >> $GITHUB_STEP_SUMMARY
